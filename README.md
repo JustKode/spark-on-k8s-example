@@ -16,15 +16,25 @@ For this purpose, you can use `./bin/docker-image-tool.sh`. Options are describe
 - `-R file`: (Optional) Dockerfile to build for SparkR Jobs. Builds R dependencies and ships with Spark. Skips building SparkR docker image if not specified.
 - `-r repo`: Repository address.
 - `-t tag`: Tag to apply to the built image, or to identify the image to be pushed.
+
+First, you need to build base image of spark
+
 ```bash
-$ cd $SPARK_DIR
+$ cd $SPARK_DIR  # spark directory
+$ eval $(minikube docker-env)
 $ ./bin/docker-image-tool.sh -r k8s -t 1.0 -p ./kubernetes/dockerfiles/spark/bindings/python/Dockerfile build
+```
+
+Second, build application image from base image of spark
+
+```bash
 $ cd <this repository path>/python
+$ eval $(minikube docker-env)
 $ docker build -t pyspark-on-k8s:1.0 .
 $ minikube image load pyspark-on-k8s:1.0
 ```
 
-You can see builded docker image by `docker image ls`
+You can see all builded docker image by `docker image ls`
 
 ```bash
 $ docker image ls
@@ -36,7 +46,14 @@ k8s/spark                            1.0       bd8ba88688d4   13 days ago     60
 ```
 
 ### How To Run Spark Application
-By Spark Submit, you can run spark application on k8s cluster.
+Before running spark application, you need to make **k8s service account and k8s clusterrolebinding.** Because Spark on k8s works in a way that the **driver pod calls the executor pod**, the driver pod must be authorized to edit the pod via clusterrolebinding.
+
+```bash
+$ kubectl create serviceaccount spark
+$ kubectl create clusterrolebinding spark-role --clusterrole=edit --serviceaccount=default:spark --namespace=default
+```
+
+By Spark Submit, you can **run spark application on k8s cluster.**
 
 ```bash
 $ kubectl proxy
@@ -45,17 +62,31 @@ Starting to serve on 127.0.0.1:8001
 # In another terminal
 $ kubectl create namespace spark-job
 
+# rdd_example
 $ ./bin/spark-submit \
     --master k8s://http://127.0.0.1:8001 \
-    --deploy-mode client \
-    --name spark-pi \
+    --deploy-mode cluster \
+    --name rdd-example \
     --class org.apache.spark.examples.SparkPi \
-    --conf spark.kubernetes.memoryOverheadFactor=0.5 \
     --conf spark.kubernetes.container.image=pyspark-on-k8s:1.0 \
-    --conf spark.kubernetes.driver.pod.name=test-driver-pod \
-    --conf spark.kubernetes.authenticate.driver.serviceAccountName=spark-job \
-    --conf spark.kubernetes.namespace=spark-job \
-    --conf spark.storage.memoryFraction=0.8 \
+    --conf spark.kubernetes.driver.pod.name=rdd-example-pod \
+    --conf spark.kubernetes.authenticate.driver.serviceAccountName=spark \
     --verbose \
-    "local:///Users/justkode/Documents/spark-on-k8s-example/python/script/01.py"
+    "local:///python/rdd_example.py"
+
+$ kubectl logs rdd-example-pod  # log check
+
+# dataframe_example
+$ ./bin/spark-submit \
+    --master k8s://http://127.0.0.1:8001 \
+    --deploy-mode cluster \
+    --name dataframe-example \
+    --class org.apache.spark.examples.SparkPi \
+    --conf spark.kubernetes.container.image=pyspark-on-k8s:1.0 \
+    --conf spark.kubernetes.driver.pod.name=dataframe-example-pod \
+    --conf spark.kubernetes.authenticate.driver.serviceAccountName=spark \
+    --verbose \
+    "local:///python/dataframe_example.py"
+
+$ kubectl logs dataframe-example-pod  # log check
 ```
